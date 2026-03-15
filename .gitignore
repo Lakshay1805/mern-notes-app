@@ -1,0 +1,11 @@
+node_modules
+.env
+
+backend/node_modules
+backend/.env
+
+frontend/notes-app/node_modules
+frontend/notes-app/.env
+
+dist
+build
