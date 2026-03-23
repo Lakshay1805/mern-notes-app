@@ -6,10 +6,18 @@ import { useState } from 'react';
 
 const Navbar = ({userInfo , onSearchNote , handleClearSearch}) => {
   const [SearchQuery, setSearchQuery] = useState("")
+    React.useEffect(() => {
+    const handler = setTimeout(() => {
+      if (SearchQuery.trim()) {
+        onSearchNote(SearchQuery);
+      } else {
+        handleClearSearch();
+      }
+    }, 500);
+
+    return () => clearTimeout(handler);
+  }, [SearchQuery])
   let handleSearch =()=>{
-    if(SearchQuery){
-      onSearchNote(SearchQuery);
-    }
   }
   let onClearSearch =()=>{
     setSearchQuery("")

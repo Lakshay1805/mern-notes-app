@@ -13,6 +13,7 @@ const userSchema = new Schema({
     fullName:{type:String},
     email:{type:String},
     password:{type:String},
+    refreshToken:{type:String},
     createdOn:{
         type:Date,
         default: new Date().getTime(),

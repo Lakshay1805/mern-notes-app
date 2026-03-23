@@ -1,5 +1,6 @@
 import React from 'react'
 import { getInitials } from '../utils/helper'
+import {FiLogOut} from 'react-icons/fi'
 
 const ProfileInfo = ({userInfo , onLogout}) => {
   return (
@@ -10,7 +11,13 @@ const ProfileInfo = ({userInfo , onLogout}) => {
 
         <div>
             <p className='text-sm font-medium'>{userInfo.fullName}</p>
-            <button className='text-sm text-slate-700 underline' onClick={onLogout}>Logout</button>
+            <button
+              className='mt-1 inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition-all duration-200 hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800 focus:outline-none focus:ring-2 focus:ring-rose-300'
+              onClick={onLogout}
+            >
+              <FiLogOut className='text-sm' />
+              Logout
+            </button>
         </div>
     </div>
   )

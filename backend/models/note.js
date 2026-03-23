@@ -19,13 +19,29 @@ const noteSchema = new Schema({
         type:Boolean,
         default:false
     },
+    isArchived:{
+        type:Boolean,
+        default:false
+    },
+    isTrashed:{
+        type:Boolean,
+        default:false
+    },
+    color:{
+        type:String,
+        default:"white"
+    },
+    attachmentUrl:{
+        type:String,
+        default:null
+    },
     userId:{
         type:Schema.Types.ObjectId,
         ref:"User"
     },
     createdOn:{
         type:Date,
-        default:new Date().getTime()
+        default:Date.now
     }
 })
 

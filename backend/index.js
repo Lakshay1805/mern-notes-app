@@ -5,30 +5,40 @@ const cors = require("cors")
 const jwt = require('jsonwebtoken')
 const bcrypt = require("bcrypt")
 const cookieParser = require("cookie-parser")
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const {authenticateToken} = require("./middleware.js")
 const User = require("./models/user.js")
 const Note = require("./models/note.js")
+const { registerSchema, loginSchema, noteSchema, editNoteSchema, validate, errorHandler } = require("./validation.js")
+const multer = require('multer')
+const path = require("path")
+const {storage}  = require("./cloudConfig.js");
 
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
-app.use(express.json())
-app.use(cors())
+app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(express.json());
+app.use(cors({
+    origin: "http://localhost:5173",
+    credentials: true
+}));
 app.use(cookieParser())
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-app.get("/" , (req,res) =>{
-    res.json({data:"hello"});
-})
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { error: true, message: "Too many requests from this IP, please try again after 15 minutes" }
+});
+
 //user routes
-app.post("/register" ,async(req,res)=>{
+app.post("/register", authLimiter , validate(registerSchema) ,async(req,res,next)=>{
+    try{
     let {fullName,email,password} = req.body;
-    if(!fullName){
-        return res.status(400).json({error:true , message:"Enter your name"})
-    }
-    if(!email){
-        return res.status(400).json({error:true , message:"Enter your email"})
-    }
-    if(!password){
-        return res.status(400).json({error:true , message:"Enter your password"})
-    }
     const isUser = await User.findOne({email});
     if(isUser){return res.status(400).json({message:"User already exists"})}
     const salt =await bcrypt.genSalt(10);
@@ -40,127 +50,188 @@ app.post("/register" ,async(req,res)=>{
         password : hash
     })
     await user.save();
-    const token = jwt.sign({ id: user._id, email: user.email } , process.env.ACCESS_TOKEN,{
-        expiresIn:"36000m"
-    })
-    res.cookie("token" , token);
-    return res.json({
-        error:false,
-        user:{
-            id: user._id,
-          fullName: user.fullName,
-          email: user.email
-        },
-        token,
-        message:"Registration Successful"
-    })
+    const accessToken = jwt.sign({ id: user._id, email: user.email }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: "15m" });
+    const refreshToken = jwt.sign({ id: user._id, email: user.email }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: "7d" });
+
+    user.refreshToken = refreshToken;
+        await user.save();
+
+        res.cookie("refreshToken", refreshToken, { httpOnly: true, secure: false, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 });
+
+        return res.json({
+            error: false,
+            user: { id: user._id, fullName: user.fullName, email: user.email },
+            accessToken,
+            message: "Registration Successful"
+        });
+    } catch(err) { next(err); }
 })
 
-app.post("/login" , async(req,res)=>{
-    let {email , password} = req.body;
-    if(!email){
-        return res.status(400).json({error:true , message:"Enter an email"})
-    }
-    if(!password){
-        return res.status(400).json({error:true , message:"Enter a password"})
-    }
-    let user = await User.findOne({email:email});
-    if (!user) {
-    return res.status(400).json({
-        error: true,
-        message: "User not found"
-    });}
-   const isMatch =await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-        return res.status(400).json({
-            error: true,
-            message: "Wrong password"
+app.post("/login",authLimiter , validate(loginSchema) , async(req,res,next)=>{
+    try {
+        const { email, password } = req.body;
+        const user = await User.findOne({ email });
+        if (!user) return res.status(400).json({ error: true, message: "User not found" });
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(400).json({ error: true, message: "Wrong password" });
+
+        const accessToken = jwt.sign({ id: user._id, email: user.email }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: "15m" });
+        const refreshToken = jwt.sign({ id: user._id, email: user.email }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: "7d" });
+
+        user.refreshToken = refreshToken;
+        await user.save();
+
+        res.cookie("refreshToken", refreshToken, { httpOnly: true, secure: false, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 });
+
+        return res.json({
+            error: false,
+            message: "Login successful",
+            user: { id: user._id, email: user.email, fullName: user.fullName },
+            accessToken
         });
-    }
-    let token = jwt.sign({id:user._id , email:user.email} , process.env.ACCESS_TOKEN , { expiresIn:"36000m"})
-    res.cookie("token" , token);
-    return res.json({
-        error:false,
-        message:"Login successful",
-        user:{
-            id: user._id,
-            email: user.email,
-            fullName: user.fullName
-        },
-        token
-    })
+    } catch(err) { next(err); }
 })
-app.post("logout" , (req,res)=>{
-    res.clearCookie("token");
-})
-app.get("/user" , authenticateToken , async(req,res)=>{
-    let userId = req.user.id;
-    let user = await User.findById(userId);
-    if(!user){
-        return res.status(400).json({error:true,message:"User don't exists"})
-    }
-    return res.json({
-        error:false,
-        user
-    })
+app.post("/refresh", async (req, res, next) => {
+    try {
+        const refreshToken = req.cookies.refreshToken;
+        if (!refreshToken) return res.status(401).json({ error: true, message: "Refresh token missing" });
+
+        const user = await User.findOne({ refreshToken });
+        if (!user) return res.status(403).json({ error: true, message: "Invalid refresh token" });
+
+        jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET, (err, decoded) => {
+            if (err) return res.status(403).json({ error: true, message: "Invalid or expired refresh token" });
+
+            const newAccessToken = jwt.sign({ id: user._id, email: user.email }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: "15m" });
+            return res.json({ error: false, accessToken: newAccessToken });
+        });
+    } catch(err) { next(err); }
+});
+app.post("/logout", async (req, res, next) => {
+    try {
+        const refreshToken = req.cookies.refreshToken;
+        if (refreshToken) {
+            const user = await User.findOne({ refreshToken });
+            if (user) {
+                user.refreshToken = "";
+                await user.save();
+            }
+        }
+        res.clearCookie("refreshToken");
+        return res.json({ error: false, message: "Logout successful" });
+    } catch(err) { next(err); }
+});
+app.get("/user" , authenticateToken , async(req,res,next)=>{
+    try {
+        const userId = req.user.id;
+        const user = await User.findById(userId);
+        if (!user) return res.status(400).json({ error: true, message: "User don't exists" });
+        return res.json({
+            error: false,
+            user: { id: user._id, fullName: user.fullName, email: user.email }
+        });
+    } catch(err) { next(err); }
 })
 
 //notes routes
-app.post("/create",authenticateToken , async(req,res)=>{
-    let {title , content , tags} = req.body;
-    if(!title){
-        return res.status(400).json({error:true , message:"Enter a title"})
-    }
-    if(!content){
-        return res.status(400).json({error:true , message:"Enter the content"})
-    }
-    let note = new Note({
-        title:title,
-        content:content,
-        tags:tags || [],
-        userId:req.user.id
-    })
-    await note.save();
-
-    return res.json({
-        error:false,
-        message:"Note created successfully",
-        note
-    })
+app.post("/create",authenticateToken,validate(noteSchema), async(req,res,next)=>{
+    try {
+        const { title, content, tags, color , attachmentUrl} = req.body;
+        const note = new Note({
+            title,
+            content,
+            tags: tags || [],
+            color: color || "white",
+            attachmentUrl: attachmentUrl || null,
+            userId: req.user.id
+        });
+        await note.save();
+        return res.json({ error: false, message: "Note created successfully", note });
+    } catch(err) { next(err); }
 })
-app.put("/edit/:id" , authenticateToken , async(req,res) =>{
-    let {id} = req.params;
-    let {title , content, tags , isPinned} = req.body;
-    if(!title || !content){
-        return res.status(400).json({error:true , message:"No changes done"})
-    }
-    const note = await Note.findById(id);
-    if(!note){
-        return res.status(400).json({message:"Note not found"})
-    }
-    if(title) note.title = title;
-    if(content) note.content = content;
-    if(tags) note.tags = tags;
-    if(isPinned !== undefined) note.isPinned = isPinned;
+app.post(
+  "/upload-attachment",
+  authenticateToken,
+  upload.single("file"),
+  async (req, res, next) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          error: true,
+          message: "No file uploaded",
+        });
+      }
+        const attachmentUrl = req.file.secure_url;
+        console.log(attachmentUrl)
+      return res.json({
+        error: false,
+        attachmentUrl,
+        message: "Attachment uploaded successfully",
+      });
 
-    await note.save();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+app.put("/edit/:id" , authenticateToken, validate(editNoteSchema) , async(req,res,next) =>{
+    try {
+        const { id } = req.params;
+        const { title, content, tags, isPinned, isArchived, isTrashed, color, attachmentUrl } = req.body;
+        if (!title && !content && !tags && isPinned === undefined && isArchived === undefined && isTrashed === undefined && color === undefined && attachmentUrl === undefined) {
+            return res.status(400).json({ error: true, message: "No changes done" });
+        }
 
-    return res.json({
-        error:false,
-        note,
-        message:"Note updated successfully",
-    })
+        const note = await Note.findOne({ _id: id, userId: req.user.id });
+        if (!note) return res.status(404).json({ error: true, message: "Note not found" });
+
+        if (title) note.title = title;
+        if (content) note.content = content;
+        if (tags) note.tags = tags;
+        if (isPinned !== undefined) note.isPinned = isPinned;
+        if (isArchived !== undefined) note.isArchived = isArchived;
+        if (isTrashed !== undefined) note.isTrashed = isTrashed;
+        if (color) note.color = color;
+        if (attachmentUrl !== undefined) note.attachmentUrl = attachmentUrl;
+
+        await note.save();
+        return res.json({ error: false, note, message: "Note updated successfully" });
+    } catch(err) { next(err); }
 })
-app.get("/notes",authenticateToken , async(req,res) =>{
-    let id = req.user.id;
-    let notes = await Note.find({userId:id}).sort({isPinned:-1});
-    return res.json({
-        error:false,
-        message:"Here is list of your all notes",
-        notes
-    })
+app.get("/notes",authenticateToken , async(req,res,next) =>{
+    try {
+        const id = req.user.id;
+        const { isArchived, isTrashed, search, sortBy, sortOrder } = req.query;
+        const query = { userId: id };
+
+        if (isArchived === 'true') query.isArchived = true;
+        if (isTrashed === 'true') query.isTrashed = true;
+        if (isArchived !== 'true' && isTrashed !== 'true') {
+            query.isArchived = false;
+            query.isTrashed = false;
+        }
+        
+        if (search) {
+            query.$or = [
+                { title: { $regex: search, $options: "i" } },
+                { content: { $regex: search, $options: "i" } },
+                { tags: { $regex: search, $options: "i" } }
+            ];
+        }
+
+        let sortSettings = {};
+        if (sortBy) {
+            sortSettings[sortBy] = sortOrder === 'asc' ? 1 : -1;
+        } else {
+            sortSettings = { isPinned: -1, createdOn: -1 };
+        }
+
+        const notes = await Note.find(query).sort(sortSettings);
+        return res.json({ error: false, message: "Here is list of your all notes", notes });
+    } catch(err) { next(err); }
 })
-app.delete("/delete/:id" , authenticateToken , async(req,res)=>{
+app.delete("/delete/:id" , authenticateToken , async(req,res,next)=>{
     let {id} = req.params;
     let note = await Note.findById(id);
     if(!note){
@@ -172,7 +243,7 @@ app.delete("/delete/:id" , authenticateToken , async(req,res)=>{
         message:"Note deleted successfully"
     })
 })
-app.put("/updateIsPin/:id" , authenticateToken , async(req,res)=>{
+app.put("/updateIsPin/:id" , authenticateToken , async(req,res,next)=>{
     let {id} = req.params;
     let {isPinned} = req.body;
     let note = await Note.findById(id);
@@ -189,31 +260,19 @@ app.put("/updateIsPin/:id" , authenticateToken , async(req,res)=>{
         note
     })
 })
-app.get("/searchNotes", authenticateToken, async (req, res) => {
-  try {
-    const { query } = req.query;
-    if (!query) {
-      return res.status(400).json({
-        error: true,
-        message: "Search query is required"
-      });
-    }
-    const notes = await Note.find({
-        title: { $regex: query, $options: "i" }
-    });
-    return res.json({
-      error: false,
-      notes,
-      message: "Notes fetched successfully"
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({
-      error: true,
-      message: "Server error"
-    });
-  }
+app.get("/searchNotes", authenticateToken, async (req, res,next) => {
+    try {
+        const { query } = req.query;
+        if (!query) return res.status(400).json({ error: true, message: "Search query is required" });
+
+        const notes = await Note.find({
+            userId: req.user.id,
+            title: { $regex: query, $options: "i" }
+        });
+        return res.json({ error: false, notes, message: "Notes fetched successfully" });
+    } catch(err) { next(err); }
 });
+app.use(errorHandler);
 
 app.listen(8000);
 module.exports = app

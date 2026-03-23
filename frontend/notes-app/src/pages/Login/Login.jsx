@@ -27,8 +27,8 @@ const Login = () => {
         email:Email,
         password:Password
       })
-      if(response.data && response.data.token){
-        localStorage.setItem("token" , response.data.token);
+      if(response.data && response.data.accessToken){
+        localStorage.setItem("token" , response.data.accessToken);
         navigate("/")
       }
     }catch(error){
