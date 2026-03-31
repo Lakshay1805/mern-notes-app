@@ -190,12 +190,46 @@ const Home = () => {
               <button className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${filterStatus === 'archived' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setFilterStatus('archived')}>Archived</button>
               <button className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${filterStatus === 'trashed' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setFilterStatus('trashed')}>Trash</button>
           </div>
-          <select className='border border-slate-300 rounded-md px-3 py-2 text-sm outline-none' value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-            <option value="">Sort By</option>
-            <option value="created_desc">Newest First</option>
-            <option value="created_asc">Oldest First</option>
-            <option value="title_asc">Title (A-Z)</option>
-          </select>
+          <div className="relative group z-10">
+            <div className='border border-slate-300 rounded-md px-3 py-2 text-sm outline-none bg-white min-w-[140px] cursor-pointer flex justify-between items-center transition-all'>
+              <span className="text-slate-700 font-medium">
+                {sortBy === 'created_desc' ? 'Newest First' : sortBy === 'created_asc' ? 'Oldest First' : sortBy === 'title_asc' ? 'Title (A-Z)' : 'Sort By'}
+              </span>
+              <span className="ml-2 text-slate-500 text-[10px] transition-transform duration-200 group-hover:rotate-180">▼</span>
+            </div>
+            
+            {/* Invisible bridge to keep hover active */}
+            <div className="absolute w-full h-3 bg-transparent top-full left-0 z-10"></div>
+            
+            <div className="absolute right-0 top-[calc(100%+4px)] hidden group-hover:block bg-white border border-slate-200 rounded-md shadow-xl z-20 w-full min-w-[150px] overflow-hidden origin-top-right transition-opacity duration-200">
+              <ul className="py-1">
+                <li 
+                  className={`px-4 py-2 text-sm hover:bg-slate-100 cursor-pointer transition-colors ${sortBy === '' ? 'bg-slate-50 text-slate-900 font-medium' : 'text-slate-700'}`} 
+                  onClick={() => setSortBy('')}
+                >
+                  Default
+                </li>
+                <li 
+                  className={`px-4 py-2 text-sm hover:bg-slate-100 cursor-pointer transition-colors ${sortBy === 'created_desc' ? 'bg-slate-50 text-slate-900 font-medium' : 'text-slate-700'}`} 
+                  onClick={() => setSortBy('created_desc')}
+                >
+                  Newest First
+                </li>
+                <li 
+                  className={`px-4 py-2 text-sm hover:bg-slate-100 cursor-pointer transition-colors ${sortBy === 'created_asc' ? 'bg-slate-50 text-slate-900 font-medium' : 'text-slate-700'}`} 
+                  onClick={() => setSortBy('created_asc')}
+                >
+                  Oldest First
+                </li>
+                <li 
+                  className={`px-4 py-2 text-sm hover:bg-slate-100 cursor-pointer transition-colors ${sortBy === 'title_asc' ? 'bg-slate-50 text-slate-900 font-medium' : 'text-slate-700'}`} 
+                  onClick={() => setSortBy('title_asc')}
+                >
+                  Title (A-Z)
+                </li>
+              </ul>
+            </div>
+          </div>
       </div>
 
       {isLoading ? (

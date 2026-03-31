@@ -14,6 +14,7 @@ const { registerSchema, loginSchema, noteSchema, editNoteSchema, validate, error
 const multer = require('multer')
 const path = require("path")
 const {storage}  = require("./cloudConfig.js");
+const FRONTEND_URL = process.env.FRONTEND_URL;
 
 const upload = multer({
   storage: storage,
@@ -23,11 +24,19 @@ const upload = multer({
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(express.json());
 app.use(cors({
-    origin: "http://localhost:5173",
+    origin:[ "http://localhost:5173" , FRONTEND_URL],
     credentials: true
 }));
 app.use(cookieParser())
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+const isProduction = process.env.NODE_ENV === "production";
+const cookieOptions = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000
+};
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -53,10 +62,10 @@ app.post("/register", authLimiter , validate(registerSchema) ,async(req,res,next
     const accessToken = jwt.sign({ id: user._id, email: user.email }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: "15m" });
     const refreshToken = jwt.sign({ id: user._id, email: user.email }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: "7d" });
 
-    user.refreshToken = refreshToken;
+        user.refreshToken = refreshToken;
         await user.save();
 
-        res.cookie("refreshToken", refreshToken, { httpOnly: true, secure: false, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 });
+        res.cookie("refreshToken", refreshToken, cookieOptions);
 
         return res.json({
             error: false,
@@ -82,7 +91,7 @@ app.post("/login",authLimiter , validate(loginSchema) , async(req,res,next)=>{
         user.refreshToken = refreshToken;
         await user.save();
 
-        res.cookie("refreshToken", refreshToken, { httpOnly: true, secure: false, sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000 });
+        res.cookie("refreshToken", refreshToken, cookieOptions);
 
         return res.json({
             error: false,
@@ -118,7 +127,11 @@ app.post("/logout", async (req, res, next) => {
                 await user.save();
             }
         }
-        res.clearCookie("refreshToken");
+        res.clearCookie("refreshToken", {
+            httpOnly: true,
+            secure: isProduction,
+            sameSite: isProduction ? "none" : "strict",
+        });
         return res.json({ error: false, message: "Logout successful" });
     } catch(err) { next(err); }
 });
@@ -274,5 +287,8 @@ app.get("/searchNotes", authenticateToken, async (req, res,next) => {
 });
 app.use(errorHandler);
 
-app.listen(8000);
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, () => {
+    console.log(`Server is listening on port ${PORT}`);
+});
 module.exports = app
